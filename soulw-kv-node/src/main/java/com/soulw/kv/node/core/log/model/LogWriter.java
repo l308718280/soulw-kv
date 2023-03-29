@@ -6,7 +6,9 @@ import com.soulw.kv.node.utils.LogFileUtils;
 import lombok.Data;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections4.CollectionUtils;
 
+import javax.annotation.concurrent.ThreadSafe;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
@@ -24,6 +26,7 @@ import java.util.stream.Stream;
 @Data
 @Slf4j
 @Accessors(chain = true)
+@ThreadSafe
 public class LogWriter {
     /**
      * 锁对象
@@ -51,8 +54,9 @@ public class LogWriter {
      *
      * @param dir 文件路径
      */
-    public LogWriter(String dir) {
+    public LogWriter(String dir, Cluster cluster) {
         this.dir = dir;
+        this.cluster = cluster;
     }
 
     /**
@@ -93,6 +97,12 @@ public class LogWriter {
         if (!Objects.equals(Boolean.TRUE, addResult)) {
             throw new RuntimeException("unknow error: " + item);
         }
+        try {
+            cluster.syncLog(item);
+        } catch (Exception e) {
+            delItem0(item);
+            throw new RuntimeException("sync client error", e);
+        }
 
         return true;
     }
@@ -124,20 +134,78 @@ public class LogWriter {
      * @param item item
      */
     public boolean delItem(LogItem item) {
+        boolean resp = delItem0(item);
+
+        if (resp) {
+            try {
+                cluster.syncLog(item);
+            } catch (Exception e) {
+                updateItemStatus(item);
+                throw new RuntimeException("transfer log error", e);
+            }
+        }
+
+        return resp;
+    }
+
+    private boolean updateItemStatus(LogItem item) {
         if (Objects.isNull(item.getOffset()) || Objects.isNull(item.getFileIndex())) {
             return false;
         }
 
-        BufferedLog mathFile = allLog.stream()
-                .filter(each -> Objects.equals(each.getFileIndex(), item.getFileIndex()))
-                .findFirst()
-                .orElse(null);
+        BufferedLog matchFile = getFile(item.getFileIndex());
+        if (Objects.nonNull(matchFile)) {
+            matchFile.setLogItemStatus(item.getOffset(), item.getStatus());
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    private boolean delItem0(LogItem item) {
+        if (Objects.isNull(item.getOffset()) || Objects.isNull(item.getFileIndex())) {
+            return false;
+        }
+
+        BufferedLog mathFile = getFile(item.getFileIndex());
 
         if (Objects.nonNull(mathFile)) {
             mathFile.setLogItemStatus(item.getOffset(), LogStatusEnum.STATUS_DEAD.getCode());
+            item.setStatus(LogStatusEnum.STATUS_DEAD.getCode());
+            return true;
+        } else {
+            return false;
         }
-
-        return false;
     }
 
+    private BufferedLog getFile(Integer fileIndex) {
+        return allLog.stream()
+                .filter(each -> Objects.equals(each.getFileIndex(), fileIndex))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * 获取数据
+     *
+     * @param fileIndex 文件索引
+     * @param offset    位置
+     */
+    public LogItem getItem(Integer fileIndex, Integer offset) {
+        if (Objects.isNull(fileIndex) || Objects.isNull(offset) || offset <= BufferedLog.PRESERVED_LEN) {
+            return null;
+        }
+
+        BufferedLog file = getFile(fileIndex);
+        if (Objects.isNull(file)) {
+            return null;
+        }
+
+        if (offset >= file.getWrotePosition()) {
+            return null;
+        }
+
+        return CollectionUtils.emptyIfNull(file.getItems(offset, 1))
+                .stream().findFirst().orElse(null);
+    }
 }
