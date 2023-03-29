@@ -6,7 +6,7 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
-import javax.annotation.concurrent.ThreadSafe;
+import javax.annotation.concurrent.NotThreadSafe;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -16,7 +16,6 @@ import java.nio.channels.FileChannel;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
-import java.util.concurrent.locks.ReentrantLock;
 
 import static java.util.Optional.ofNullable;
 
@@ -28,7 +27,7 @@ import static java.util.Optional.ofNullable;
  */
 @Data
 @Slf4j
-@ThreadSafe
+@NotThreadSafe
 public class BufferedLog {
     /**
      * 缓存文件大小
@@ -58,7 +57,6 @@ public class BufferedLog {
     private volatile int committedPosition;
     private volatile int flushPosition;
     private long lastFlushTime;
-    private final ReentrantLock lock = new ReentrantLock();
 
     /**
      * 构建
@@ -111,15 +109,10 @@ public class BufferedLog {
      * @return 结果
      */
     public boolean setLogItemStatus(long offset, Short newStatus) {
-        try {
-            lock.lock();
-            ByteBuffer buffer = mappedBuffer.slice();
-            buffer.position((int) (offset + LogItem.STATUS_OFFSET));
-            buffer.putShort(newStatus);
-            return true;
-        } finally {
-            lock.unlock();
-        }
+        ByteBuffer buffer = mappedBuffer.slice();
+        buffer.position((int) (offset + LogItem.STATUS_OFFSET));
+        buffer.putShort(newStatus);
+        return true;
     }
 
     /**
@@ -128,23 +121,17 @@ public class BufferedLog {
      * @param logItem 日志
      */
     public boolean addLogItem(LogItem logItem) {
-        try {
-            lock.lock();
+        Preconditions.checkNotNull(logItem.getSize(), "size is null");
+        logItem.setOffset(WROTE_POSITION.get(this));
+        logItem.setSize(logItem.computeSize());
+        logItem.setContentSize(ofNullable(logItem.getData()).map(each -> each.length)
+                .orElse(0));
+        logItem.setFileIndex(fileIndex);
 
-            Preconditions.checkNotNull(logItem.getSize(), "size is null");
-            logItem.setOffset(WROTE_POSITION.get(this));
-            logItem.setSize(logItem.computeSize());
-            logItem.setContentSize(ofNullable(logItem.getData()).map(each -> each.length)
-                    .orElse(0));
-            logItem.setFileIndex(fileIndex);
+        ByteBuffer buffer = ByteBuffer.allocate(logItem.computeSize());
+        logItem.writeBuffer(buffer);
 
-            ByteBuffer buffer = ByteBuffer.allocate(logItem.computeSize());
-            logItem.writeBuffer(buffer);
-
-            return appendBuffer(buffer);
-        } finally {
-            lock.unlock();
-        }
+        return appendBuffer(buffer);
     }
 
     /**

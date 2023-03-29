@@ -1,6 +1,7 @@
 package com.soulw.kv.node.core.log.model;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Maps;
 import com.soulw.kv.node.core.cluster.model.Cluster;
 import com.soulw.kv.node.utils.LogFileUtils;
 import lombok.Data;
@@ -12,6 +13,7 @@ import javax.annotation.concurrent.ThreadSafe;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
@@ -31,7 +33,8 @@ public class LogWriter {
     /**
      * 锁对象
      */
-    private final ReentrantLock lock = new ReentrantLock();
+    private final ReentrantLock addLock = new ReentrantLock();
+    private final ReentrantLock updateLock = new ReentrantLock();
     /**
      * 集群对象
      */
@@ -43,7 +46,7 @@ public class LogWriter {
     /**
      * 全量缓存日志
      */
-    private List<BufferedLog> allLog;
+    private Map<Integer, BufferedLog> allLog;
     /**
      * 当前缓存日志
      */
@@ -74,9 +77,10 @@ public class LogWriter {
         List<FileNameVO> files = Stream.of(Objects.requireNonNull(dirFile.listFiles()))
                 .map(each -> LogFileUtils.resolve(each.getName()))
                 .collect(Collectors.toList());
-        this.allLog = files.stream()
+        this.allLog = Maps.newConcurrentMap();
+        files.stream()
                 .map(each -> new BufferedLog(dir + File.separator + each.getFileName(), each.getIndex()))
-                .collect(Collectors.toList());
+                .forEach(each -> allLog.put(each.getFileIndex(), each));
 
         // step3. 获得工作文件
         rolloverNext();
@@ -88,11 +92,17 @@ public class LogWriter {
      * @param item item
      */
     public boolean addItem(LogItem item) {
-        // step1. 写入本地日志
-        boolean addResult = this.currentLog.addLogItem(item);
-        if (!addResult) {
-            rolloverNext();
+        boolean addResult = false;
+        try {
+            addLock.lock();
+            // step1. 写入本地日志
             addResult = this.currentLog.addLogItem(item);
+            if (!addResult) {
+                rolloverNext();
+                addResult = this.currentLog.addLogItem(item);
+            }
+        } finally {
+            addLock.unlock();
         }
         if (!Objects.equals(Boolean.TRUE, addResult)) {
             throw new RuntimeException("unknow error: " + item);
@@ -109,7 +119,6 @@ public class LogWriter {
 
     private void rolloverNext() {
         try {
-            lock.lock();
             BufferedLog nowLog = currentLog;
             if (Objects.nonNull(nowLog)) {
                 nowLog.flush();
@@ -118,13 +127,11 @@ public class LogWriter {
             int fileIndex = allLog.size();
             BufferedLog newLog = new BufferedLog(dir + File.separator + LogFileUtils.generateFileName(fileIndex), fileIndex);
             newLog.init();
-            this.allLog.add(newLog);
+            this.allLog.put(newLog.getFileIndex(), newLog);
             this.currentLog = newLog;
         } catch (IOException e) {
             log.error("rollover next error", e);
             throw new RuntimeException(e);
-        } finally {
-            lock.unlock();
         }
     }
 
@@ -153,7 +160,7 @@ public class LogWriter {
             return false;
         }
 
-        BufferedLog matchFile = getFile(item.getFileIndex());
+        BufferedLog matchFile = allLog.get(item.getFileIndex());
         if (Objects.nonNull(matchFile)) {
             matchFile.setLogItemStatus(item.getOffset(), item.getStatus());
             return true;
@@ -162,27 +169,30 @@ public class LogWriter {
         }
     }
 
+    /**
+     * 线程安全
+     *
+     * @param item 数据
+     * @return 结果
+     */
     private boolean delItem0(LogItem item) {
         if (Objects.isNull(item.getOffset()) || Objects.isNull(item.getFileIndex())) {
             return false;
         }
 
-        BufferedLog mathFile = getFile(item.getFileIndex());
+        BufferedLog mathFile = allLog.get(item.getFileIndex());
 
-        if (Objects.nonNull(mathFile)) {
-            mathFile.setLogItemStatus(item.getOffset(), LogStatusEnum.STATUS_DEAD.getCode());
-            item.setStatus(LogStatusEnum.STATUS_DEAD.getCode());
-            return true;
-        } else {
-            return false;
+        try {
+            updateLock.lock();
+            if (Objects.nonNull(mathFile) && mathFile.setLogItemStatus(item.getOffset(), LogStatusEnum.STATUS_DEAD.getCode())) {
+                item.setStatus(LogStatusEnum.STATUS_DEAD.getCode());
+                return true;
+            } else {
+                return false;
+            }
+        } finally {
+            updateLock.unlock();
         }
-    }
-
-    private BufferedLog getFile(Integer fileIndex) {
-        return allLog.stream()
-                .filter(each -> Objects.equals(each.getFileIndex(), fileIndex))
-                .findFirst()
-                .orElse(null);
     }
 
     /**
@@ -196,7 +206,7 @@ public class LogWriter {
             return null;
         }
 
-        BufferedLog file = getFile(fileIndex);
+        BufferedLog file = allLog.get(fileIndex);
         if (Objects.isNull(file)) {
             return null;
         }
