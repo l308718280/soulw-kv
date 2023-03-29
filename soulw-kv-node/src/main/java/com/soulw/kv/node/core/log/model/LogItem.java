@@ -1,5 +1,6 @@
 package com.soulw.kv.node.core.log.model;
 
+import com.google.common.base.Preconditions;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -81,6 +82,7 @@ public class LogItem implements Serializable {
         buffer.putInt(contentSize);
         buffer.putInt(fileIndex);
         if (Objects.nonNull(data)) {
+            Preconditions.checkState(Objects.equals(contentSize, data.length), "invalid data: " + this);
             buffer.put(data, 0, data.length);
         }
     }
