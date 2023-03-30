@@ -99,6 +99,22 @@ public class Cluster {
     }
 
     /**
+     * 接收心跳
+     *
+     * @param apply 接收心跳
+     */
+    public void receiveHeartbeat(VoteApply apply) {
+        Node reqMaster = apply.getCurrentNode();
+        if (!reqMaster.equals(masterNode.get())) {
+            this.currentNode.switchSlave(apply.getCurrentNode(), apply.getVoteTime());
+            this.masterNode.set(reqMaster);
+            this.switchRunning(apply.getCurrentNode());
+        }
+        this.currentNode.getLastHeartbeatTime().set(System.currentTimeMillis());
+        log.info("receive heartbeat success");
+    }
+
+    /**
      * 切换为选举状态
      */
     public void switchVoting() {
@@ -125,7 +141,7 @@ public class Cluster {
      *
      * @param masterNode 工作节点
      */
-    public void switchRunning(WorkNode masterNode) {
+    public void switchRunning(Node masterNode) {
         int prevVoteStatus = this.status.get();
         if (!this.status.compareAndSet(prevVoteStatus, ClusterStatusEnum.RUNNING.getCode())) {
             throw new RuntimeException("mutex update voting status to running error, retry...");

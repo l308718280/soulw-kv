@@ -20,8 +20,12 @@ public class NodeRepositoryImpl implements NodeRepository {
 
     @Override
     public List<Node> queryAllNodes() {
-        return Lists.newArrayList(new Node().setIp("10.254.171.68")
-                .setPort(8080));
+        List<Node> result = Lists.newArrayList();
+        for (int i = 0; i < 5; i++) {
+            result.add(new Node().setIp("10.254.171.68")
+                    .setPort(8080 + i));
+        }
+        return result;
     }
 
 }

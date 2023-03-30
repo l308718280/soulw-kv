@@ -43,6 +43,7 @@ public class VoteRunner implements RunnerLifecycle {
             VoteApply applyRequest = new VoteApply();
             applyRequest.setVoteTime(System.currentTimeMillis());
             applyRequest.setCurrentNode(this.workNode);
+            this.workNode.getLastVoteTime().set(applyRequest.getVoteTime());
             int voteNums = 0;
             boolean isOk = false;
             for (Node node : allNodes) {

@@ -85,12 +85,15 @@ public class WorkNode extends Node {
         Preconditions.checkNotNull(apply.getCurrentNode(), "node is null");
         Preconditions.checkNotNull(apply.getVoteTime(), "vote time is null");
         // step1. 集群在选举中只认老的
-        if (cluster.isVoting() && apply.getVoteTime() >= this.lastVoteTime.get()) {
-            return false;
+        if (cluster.isVoting() && apply.getVoteTime() > this.lastVoteTime.get()) {
+            if (!apply.getCurrentNode().equals(voteMasterNode.get())) {
+                log.error("not accept vote by request voteTime <= lastVoteTime");
+                return false;
+            }
         }
 
         // step2. 非选举状态voting必须更大
-        if (!cluster.isVoting() && apply.getVoteTime() <= this.lastVoteTime.get()) {
+        if (!cluster.isVoting() && apply.getVoteTime() < this.lastVoteTime.get()) {
             return false;
         }
 
