@@ -1,3 +1,9 @@
 # 端口配置
 server:
   port: 8080
+
+# 日志配置
+domain:
+  registry:
+    # 日志记录配置
+    dir: ${user.home}/log

@@ -9,12 +9,17 @@ import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 
+import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -30,6 +35,18 @@ import java.util.stream.Stream;
 @Accessors(chain = true)
 @ThreadSafe
 public class LogWriter {
+    /**
+     * 刷新线程
+     */
+    public static final ScheduledThreadPoolExecutor FLUSH_THREAD = new ScheduledThreadPoolExecutor(1, r -> {
+        Thread thread = new Thread(r);
+        thread.setName("LogWriter-FlushThread");
+        thread.setDaemon(true);
+        thread.setPriority(Thread.NORM_PRIORITY);
+        thread.setUncaughtExceptionHandler((t, e) -> log.error("schedule error", e));
+        return thread;
+    }, new ThreadPoolExecutor.DiscardPolicy());
+    private static final long FLUSH_INTERVAL_SEC = Long.valueOf(System.getProperty("LogWriter.flush.interval", "5000"));
     /**
      * 锁对象
      */
@@ -79,11 +96,47 @@ public class LogWriter {
                 .collect(Collectors.toList());
         this.allLog = Maps.newConcurrentMap();
         files.stream()
-                .map(each -> new BufferedLog(dir + File.separator + each.getFileName(), each.getIndex()))
+                .map(each -> {
+                    BufferedLog bufferedLog = new BufferedLog(dir + File.separator + each.getFileName(), each.getIndex());
+                    try {
+                        bufferedLog.init();
+                    } catch (IOException e) {
+                        throw new RuntimeException("load file log error", e);
+                    }
+                    return bufferedLog;
+                })
                 .forEach(each -> allLog.put(each.getFileIndex(), each));
 
         // step3. 获得工作文件
         rolloverNext();
+
+        // step4. 自动刷新
+        FLUSH_THREAD.scheduleAtFixedRate(() -> {
+            allLog.forEach((k, v) -> {
+                v.flush();
+                log.info("flush log success, index: " + v.getFileIndex());
+            });
+        }, FLUSH_INTERVAL_SEC, FLUSH_INTERVAL_SEC, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 复写日志
+     *
+     * @param item 日志
+     * @return 结果
+     */
+    public boolean overrideLog(LogItem item) {
+        if (Objects.isNull(item) || Objects.isNull(item.getFileIndex()) || Objects.isNull(item.getOffset())) {
+            return false;
+        }
+
+        ensureFileIndexExists(item.getFileIndex());
+        BufferedLog workLog = allLog.get(item.getFileIndex());
+        // 确保覆盖过程是锁的
+        synchronized (workLog) {
+            workLog.overrideLog(item);
+        }
+        return true;
     }
 
     /**
@@ -117,15 +170,27 @@ public class LogWriter {
         return true;
     }
 
+    private void ensureFileIndexExists(Integer fileIndex) {
+        try {
+            allLog.computeIfAbsent(fileIndex, r -> {
+                BufferedLog newLog = new BufferedLog(dir + File.separator + LogFileUtils.generateFileName(fileIndex), fileIndex);
+                try {
+                    newLog.init();
+                } catch (IOException e) {
+                    throw new RuntimeException("init log error", e);
+                }
+                return newLog;
+            });
+        } catch (Exception e) {
+            log.error("build file index error", e);
+            throw new RuntimeException(e);
+        }
+    }
+
     private void rolloverNext() {
         try {
-            BufferedLog nowLog = currentLog;
-            if (Objects.nonNull(nowLog)) {
-                nowLog.flush();
-            }
-
-            int fileIndex = allLog.size();
-            BufferedLog newLog = new BufferedLog(dir + File.separator + LogFileUtils.generateFileName(fileIndex), fileIndex);
+            int newFileIndex = allLog.isEmpty() ? 0 : allLog.keySet().stream().max(Integer::compareTo).orElse(0) + 1;
+            BufferedLog newLog = new BufferedLog(dir + File.separator + LogFileUtils.generateFileName(newFileIndex), newFileIndex);
             newLog.init();
             this.allLog.put(newLog.getFileIndex(), newLog);
             this.currentLog = newLog;

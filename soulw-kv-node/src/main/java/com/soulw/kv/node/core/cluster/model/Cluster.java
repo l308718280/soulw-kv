@@ -4,6 +4,8 @@ import com.soulw.kv.node.core.log.model.LogItem;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
+import java.util.List;
+
 /**
  * Created by SoulW on 2023/3/29.
  *
@@ -16,6 +18,15 @@ public class Cluster {
     private Integer status;
     private Long minSlaveNode;
     private Long heartbeatTimeout;
+    private List<Node> nodes;
+    private Node currentNode;
+
+    /**
+     * 集群初始化
+     */
+    public void init() {
+
+    }
 
     /**
      * 同步日志给集群

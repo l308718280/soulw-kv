@@ -1,6 +1,5 @@
 package com.soulw.kv.node.core.log.model;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -30,9 +29,9 @@ import static java.util.Optional.ofNullable;
 @NotThreadSafe
 public class BufferedLog {
     /**
-     * 缓存文件大小
+     * 缓存文件大小，默认15mb
      */
-    private static final long FILE_SIZE = Long.parseLong(System.getProperty("buffered.log.fileSize", "1024"));
+    private static final long FILE_SIZE = Long.parseLong(System.getProperty("buffered.log.fileSize", "15728640"));
     protected static final AtomicIntegerFieldUpdater<BufferedLog> WROTE_POSITION;
     protected static final AtomicIntegerFieldUpdater<BufferedLog> COMMITED_POSITION;
     protected static final AtomicIntegerFieldUpdater<BufferedLog> FLUSH_POSITION;
@@ -121,7 +120,9 @@ public class BufferedLog {
      * @param logItem 日志
      */
     public boolean addLogItem(LogItem logItem) {
-        Preconditions.checkNotNull(logItem.getSize(), "size is null");
+        if (Objects.isNull(logItem) || Objects.isNull(logItem.getSize())) {
+            return false;
+        }
         logItem.setOffset(WROTE_POSITION.get(this));
         logItem.setSize(logItem.computeSize());
         logItem.setContentSize(ofNullable(logItem.getData()).map(each -> each.length)
@@ -132,6 +133,30 @@ public class BufferedLog {
         logItem.writeBuffer(buffer);
 
         return appendBuffer(buffer);
+    }
+
+    /**
+     * 复写日志
+     *
+     * @param logItem 日志
+     * @return 结果
+     */
+    public boolean overrideLog(LogItem logItem) {
+        if (Objects.isNull(logItem) || Objects.isNull(logItem.getOffset()) ||
+                Objects.isNull(logItem.getSize())) {
+            return false;
+        }
+
+        ByteBuffer tmpBuffer = mappedBuffer.slice();
+        tmpBuffer.position(logItem.getOffset());
+        logItem.writeBuffer(tmpBuffer);
+
+        int currentPos = WROTE_POSITION.get(this);
+        int newPos = logItem.getOffset() + logItem.getSize();
+        if (newPos >= currentPos) {
+            WROTE_POSITION.set(this, newPos);
+        }
+        return true;
     }
 
     /**
