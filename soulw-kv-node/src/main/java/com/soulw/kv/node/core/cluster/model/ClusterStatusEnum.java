@@ -11,7 +11,7 @@ import lombok.Getter;
  */
 @AllArgsConstructor
 @Getter
-public enum ClusterEnum {
+public enum ClusterStatusEnum {
     VOTING(1),
     RUNNING(2);
 
