@@ -2,6 +2,7 @@ package com.soulw.kv.node.core.cluster.gateway;
 
 import com.soulw.kv.node.core.cluster.model.Node;
 import com.soulw.kv.node.core.cluster.model.VoteApply;
+import com.soulw.kv.node.core.log.model.LogItem;
 
 /**
  * Created by SoulW on 2023/3/30.
@@ -27,4 +28,12 @@ public interface NodeRequestGateway {
      * @return 是否成功
      */
     boolean heartbeat(Node node, VoteApply applyRequest);
+
+    /**
+     * 同步日志
+     *
+     * @param node    节点
+     * @param logItem 日志项
+     */
+    void syncLog(Node node, LogItem logItem);
 }

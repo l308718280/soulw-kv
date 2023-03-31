@@ -25,7 +25,6 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.CertificateException;
@@ -77,13 +76,14 @@ public class HttpUtils {
             post.addHeader(HttpHeaders.CONTENT_TYPE, ContentType.APPLICATION_JSON.getMimeType());
         }
 
+        if (log.isInfoEnabled()) {
+            log.info("HttpUtils.post() url: {}, data: {}, headers: {}", url, data, post.getAllHeaders());
+        }
+
         if (data instanceof String) {
             post.setEntity(new StringEntity((String) data, StandardCharsets.UTF_8));
         } else {
             post.setEntity(new StringEntity(JSON.toJSONString(data), StandardCharsets.UTF_8));
-        }
-        if (log.isInfoEnabled()) {
-            log.info("HttpUtils.post() url: {}, data: {}, headers: {}", url, data, post.getAllHeaders());
         }
         return resolveResponse(post);
     }
@@ -108,7 +108,7 @@ public class HttpUtils {
                         respVO.getStatus(), respVO.getStatusMsg(), respVO.getBodyStr());
             }
             return respVO;
-        } catch (IOException e) {
+        } catch (Throwable e) {
             log.error("request error", e);
             return new ResponseVO(null, SYSTEM_ERROR, e.getMessage(), false);
         }

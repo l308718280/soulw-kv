@@ -3,6 +3,7 @@ package com.soulw.kv.node.web.controller;
 import com.soulw.kv.node.core.cluster.model.Cluster;
 import com.soulw.kv.node.core.cluster.model.VoteApply;
 import com.soulw.kv.node.core.log.model.LogItem;
+import com.soulw.kv.node.core.log.model.LogWriter;
 import com.soulw.kv.node.web.enums.ErrorCode;
 import com.soulw.kv.node.web.vo.Result;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,6 +26,8 @@ public class SlaveController {
 
     @Resource
     private Cluster cluster;
+    @Resource
+    private LogWriter logWriter;
 
     /**
      * 同步日志
@@ -32,9 +35,13 @@ public class SlaveController {
      * @param logItem 日志项
      * @return 结果
      */
-    public Result<Boolean> syncLog(LogItem logItem) {
-
-        return null;
+    @PostMapping("/syncLog")
+    public Result<Boolean> syncLog(@RequestBody LogItem logItem) {
+        if (Objects.isNull(logItem)) {
+            return Result.fail(ErrorCode.SYSTEM_ERROR.getCode(), "missing request params");
+        }
+        boolean result = logWriter.overrideLog(logItem);
+        return Result.success(result);
     }
 
     @PostMapping("/heartbeat")
@@ -53,7 +60,7 @@ public class SlaveController {
             return Result.fail(ErrorCode.SYSTEM_ERROR.getCode(), "missing request params");
         }
 
-        if (!cluster.getCurrentNode().doVote(apply)) {
+        if (!cluster.getWorkNode().doVote(apply)) {
             return Result.fail(ErrorCode.VOTE_ERROR.getCode(), "not accept vote");
         }
         return Result.success(true);

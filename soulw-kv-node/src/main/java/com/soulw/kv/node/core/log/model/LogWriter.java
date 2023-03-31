@@ -9,7 +9,6 @@ import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 
-import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
 import java.io.File;
 import java.io.IOException;
@@ -17,7 +16,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -46,7 +44,7 @@ public class LogWriter {
         thread.setUncaughtExceptionHandler((t, e) -> log.error("schedule error", e));
         return thread;
     }, new ThreadPoolExecutor.DiscardPolicy());
-    private static final long FLUSH_INTERVAL_SEC = Long.valueOf(System.getProperty("LogWriter.flush.interval", "5000"));
+    private static final long FLUSH_INTERVAL_SEC = Long.parseLong(System.getProperty("LogWriter.flush.interval", "5000"));
     /**
      * 锁对象
      */
@@ -136,6 +134,7 @@ public class LogWriter {
         synchronized (workLog) {
             workLog.overrideLog(item);
         }
+
         return true;
     }
 
@@ -145,6 +144,13 @@ public class LogWriter {
      * @param item item
      */
     public boolean addItem(LogItem item) {
+        try {
+            cluster.getSpec().check(item);
+        } catch (Exception e) {
+            log.error("only master node can add item", e);
+            return false;
+        }
+
         boolean addResult = false;
         try {
             addLock.lock();
@@ -158,7 +164,7 @@ public class LogWriter {
             addLock.unlock();
         }
         if (!Objects.equals(Boolean.TRUE, addResult)) {
-            throw new RuntimeException("unknow error: " + item);
+            throw new RuntimeException("unknown error: " + item);
         }
         try {
             cluster.syncLog(item);

@@ -42,7 +42,7 @@ public class VoteRunner implements RunnerLifecycle {
             // step3. 进行选举
             VoteApply applyRequest = new VoteApply();
             applyRequest.setVoteTime(System.currentTimeMillis());
-            applyRequest.setCurrentNode(this.workNode);
+            applyRequest.setCurrentNode(this.workNode.toSimpleNode());
             this.workNode.getLastVoteTime().set(applyRequest.getVoteTime());
             int voteNums = 0;
             boolean isOk = false;
@@ -61,7 +61,7 @@ public class VoteRunner implements RunnerLifecycle {
                     voteNums++;
                 }
                 // 判断是否满足条件
-                if (voteNums >= allNodes.size() / 2 + 1) {
+                if (cluster.isSatisfyRaft(voteNums)) {
                     // 选举通过
                     workNode.switchMaster(applyRequest);
                     isOk = true;
@@ -70,7 +70,7 @@ public class VoteRunner implements RunnerLifecycle {
             }
 
             // step4. 判断边界场景
-            if (!workNode.getIsMaster().get() && voteNums >= allNodes.size() / 2 + 1) {
+            if (!workNode.getIsMaster().get() && cluster.isSatisfyRaft(voteNums)) {
                 workNode.switchMaster(applyRequest);
                 isOk = true;
             }

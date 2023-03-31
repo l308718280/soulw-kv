@@ -11,6 +11,7 @@ import org.springframework.core.env.Environment;
  */
 public class EnvironmentUtils {
     private static final String CODE_SERVER_PORT = "server.port";
+    private static final String CODE_STANDARD_RAFT = "domain.registry.standard-raft";
 
     private static final Integer DEFAULT_PORT = 8080;
 
@@ -22,5 +23,9 @@ public class EnvironmentUtils {
      */
     public static Integer getPort(Environment environment) {
         return ObjectUtils.defaultIfNull(environment.getProperty(CODE_SERVER_PORT, Integer.class), DEFAULT_PORT);
+    }
+
+    public static Boolean getStandardRaft(Environment environment) {
+        return ObjectUtils.defaultIfNull(environment.getProperty(CODE_STANDARD_RAFT, Boolean.TYPE), true);
     }
 }

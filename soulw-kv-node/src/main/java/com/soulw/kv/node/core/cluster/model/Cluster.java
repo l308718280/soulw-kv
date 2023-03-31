@@ -5,12 +5,15 @@ import com.soulw.kv.node.core.cluster.repository.NodeRepository;
 import com.soulw.kv.node.core.log.model.LogItem;
 import com.soulw.kv.node.utils.EnvironmentUtils;
 import com.soulw.kv.node.utils.NetworkUtils;
+import com.soulw.kv.node.utils.ThreadPoolUtils;
 import lombok.Data;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.env.Environment;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.Objects;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -34,6 +37,7 @@ public class Cluster {
     private static final Long DEFAULT_HEARTBEAT_TIMEOUT = 10L;
     private static final Long DEFAULT_VOTING_TIMEOUT = 60L;
     private static final Long MIN_SLAVE_NODE = 0L;
+    private static final Integer DEFAULT_QUEUE_SIZE = 200;
 
     private final AtomicInteger status = new AtomicInteger(ClusterStatusEnum.RUNNING.getCode());
     private final AtomicLong startVotingTime = new AtomicLong(0L);
@@ -45,9 +49,11 @@ public class Cluster {
     private Long votingTimeout = DEFAULT_VOTING_TIMEOUT;
     private final AtomicReference<Node> masterNode = new AtomicReference<>();
     private NodeRepository nodeRepository;
-    private WorkNode currentNode;
+    private WorkNode workNode;
     private NodeRequestGateway nodeRequestGateway;
     private Environment environment;
+    private ThreadPoolTaskExecutor executor;
+    private Boolean standardRaft;
 
     /**
      * 构建
@@ -66,9 +72,16 @@ public class Cluster {
      * 集群初始化
      */
     public void init() {
-        this.currentNode = new WorkNode(this);
-        this.currentNode.setIp(NetworkUtils.loadIp())
+        this.workNode = new WorkNode(this);
+        this.workNode.setIp(NetworkUtils.loadIp())
                 .setPort(EnvironmentUtils.getPort(environment));
+        if (Objects.isNull(executor)) {
+            int coreSize = Runtime.getRuntime().availableProcessors() * 2 - 1;
+            executor = ThreadPoolUtils.newExecutor(coreSize, coreSize << 1, DEFAULT_QUEUE_SIZE,
+                    new ThreadPoolExecutor.CallerRunsPolicy(), "cluster-executor");
+        }
+
+        this.standardRaft = EnvironmentUtils.getStandardRaft(environment);
     }
 
     /**
@@ -77,7 +90,59 @@ public class Cluster {
      * @param logItem 日志
      */
     public void syncLog(LogItem logItem) {
+        // step1. 检查权限
+        getSpec().check(logItem);
 
+        // step2. 开始同步日志
+        int syncNums = 0;
+        for (Node node : workNode.getAliveNodes().get()) {
+            if (workNode.equals(node)) {
+                syncNums++;
+                continue;
+            }
+
+            if (this.isSatisfyRaft(syncNums)) {
+                asyncSyncLog(logItem, node);
+                continue;
+            }
+
+            try {
+                nodeRequestGateway.syncLog(node, logItem);
+                syncNums++;
+            } catch (Exception e) {
+                log.error("sync log error", e);
+            }
+
+        }
+    }
+
+    /**
+     * 是否满足
+     *
+     * @param nums 目前数量
+     * @return 结果
+     */
+    public boolean isSatisfyRaft(int nums) {
+        return new RaftCompare(this, nodeRepository.queryAllNodes()).isSatisfy(nums);
+    }
+
+    /**
+     * 异步同步日志
+     *
+     * @param logItem 日志
+     * @param node    节点
+     */
+    private void asyncSyncLog(LogItem logItem, Node node) {
+        executor.submit(() -> nodeRequestGateway.syncLog(node, logItem));
+    }
+
+    /**
+     * 创建SPEC
+     *
+     * @return 结果
+     */
+    public SyncLogSpec getSpec() {
+        return new SyncLogSpec(status.get(), minSlaveNode.intValue(), workNode);
     }
 
     /**
@@ -106,11 +171,11 @@ public class Cluster {
     public void receiveHeartbeat(VoteApply apply) {
         Node reqMaster = apply.getCurrentNode();
         if (!reqMaster.equals(masterNode.get())) {
-            this.currentNode.switchSlave(apply.getCurrentNode(), apply.getVoteTime());
+            this.workNode.switchSlave(apply.getCurrentNode(), apply.getVoteTime());
             this.masterNode.set(reqMaster);
             this.switchRunning(apply.getCurrentNode());
         }
-        this.currentNode.getLastHeartbeatTime().set(System.currentTimeMillis());
+        this.workNode.getLastHeartbeatTime().set(System.currentTimeMillis());
         log.info("receive heartbeat success");
     }
 
@@ -147,5 +212,6 @@ public class Cluster {
             throw new RuntimeException("mutex update voting status to running error, retry...");
         }
         this.masterNode.set(masterNode);
+        log.info("cluster is switch running...");
     }
 }

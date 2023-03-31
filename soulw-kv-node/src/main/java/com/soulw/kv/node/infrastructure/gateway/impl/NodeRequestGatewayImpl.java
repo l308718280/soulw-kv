@@ -2,9 +2,11 @@ package com.soulw.kv.node.infrastructure.gateway.impl;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.TypeReference;
+import com.google.common.base.Preconditions;
 import com.soulw.kv.node.core.cluster.gateway.NodeRequestGateway;
 import com.soulw.kv.node.core.cluster.model.Node;
 import com.soulw.kv.node.core.cluster.model.VoteApply;
+import com.soulw.kv.node.core.log.model.LogItem;
 import com.soulw.kv.node.utils.HttpUtils;
 import com.soulw.kv.node.web.vo.Result;
 import lombok.extern.slf4j.Slf4j;
@@ -24,31 +26,38 @@ public class NodeRequestGatewayImpl implements NodeRequestGateway {
 
     private static final String URL_PATTERN_REQUEST_VOTE = "http://%s:%s/slave/request/vote";
     private static final String URL_PATTERN_HEARTBEAT = "http://%s:%s/slave/heartbeat";
+    private static final String URL_PATTERN_SYNC_LOG = "http://%s:%s/slave/syncLog";
 
     @Override
     public boolean requestVote(Node node, VoteApply applyRequest) {
         try {
             HttpUtils.ResponseVO resp = HttpUtils.post(String.format(URL_PATTERN_REQUEST_VOTE, node.getIp(), node.getPort()), applyRequest, null);
-            if (resp.isSuccess()) {
-                return resolveData(resp);
-            }
+            Preconditions.checkState(resp.isSuccess(), "response error");
+            return resolveData(resp);
         } catch (Exception e) {
             log.error("request vote error", e);
+            return false;
         }
-        return false;
     }
 
     @Override
     public boolean heartbeat(Node node, VoteApply applyRequest) {
         try {
             HttpUtils.ResponseVO resp = HttpUtils.post(String.format(URL_PATTERN_HEARTBEAT, node.getIp(), node.getPort()), applyRequest, null);
-            if (resp.isSuccess()) {
-                return resolveData(resp);
-            }
+            Preconditions.checkState(resp.isSuccess(), "response error");
+            return resolveData(resp);
         } catch (Exception e) {
-            log.error("request heartbeat error", e);
+            log.error("heartbeat error", e);
+            return false;
         }
-        return false;
+    }
+
+    @Override
+    public void syncLog(Node node, LogItem logItem) {
+        HttpUtils.ResponseVO resp = HttpUtils.post(String.format(URL_PATTERN_SYNC_LOG, node.getIp(), node.getPort()), logItem, null);
+        Preconditions.checkState(resp.isSuccess(), "response error");
+        boolean flag = resolveData(resp);
+        Preconditions.checkState(flag, "sync log error");
     }
 
     private boolean resolveData(HttpUtils.ResponseVO resp) {
